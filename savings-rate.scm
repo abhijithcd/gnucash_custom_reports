@@ -1,6 +1,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; net-charts.scm : Display a time series line or bar chart for
-;; either net worth or net profit.
+;; savings-rate.scm : Display a time series bar chart for
+;; net profit and display savings rate as a percentage of income.
 ;;
 ;; By Robert Merkel <rgmerk@mira.net>
 ;; and Christian Stimming <stimming@tu-harburg.de>
@@ -26,7 +26,7 @@
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(define-module (gnucash reports standard net-charts))
+(define-module (gnucash reports standard savings-rate))
 
 (use-modules (gnucash engine))
 (use-modules (gnucash utilities))
@@ -60,6 +60,12 @@
 
 ;;(define optname-x-grid (N_ "X grid"))
 (define optname-y-grid (N_ "Grid"))
+
+(define savingsrate
+  (lambda (savings income)
+    (if (= income 0)
+      0
+      (* (/ savings income) 100))))
 
 (define (options-generator inc-exp? linechart?)
   (let* ((options (gnc-new-optiondb)))
@@ -117,7 +123,7 @@
       gnc:pagename-display
       (N_ "Show table")
       "c" (N_ "Display a table of the selected data.")
-      #f)
+      #t)
 
     (gnc:options-add-plot-size!
      options gnc:pagename-display
@@ -299,12 +305,15 @@
             (dummy (gnc:report-percent-done 80))
 
             (difference-balances (map + minuend-balances subtrahend-balances))
-
+            (net-balances #f)
             (dates-list (if inc-exp?
                             (list-head dates-list (1- (length dates-list)))
                             dates-list))
 
             (date-string-list (map qof-print-date dates-list)))
+
+       (set! net-balances
+                  (map savingsrate difference-balances minuend-balances))
 
        (gnc:report-percent-done 90)
 
@@ -377,12 +386,23 @@
           "#2ECC40"
           'fill (not linechart?)
           'pointRadius markers
-          'borderWidth line-width))
+          'borderWidth line-width)
+
+          (gnc:html-chart-add-data-series!
+          chart
+          (if inc-exp? (G_ "Saving Rate") (G_ "Net Worth"))
+          net-balances
+          "#8F2ECC"
+          'fill (not linechart?)
+          'pointRadius markers
+          'borderWidth line-width)
+          )
 
        ;; Test for all-zero data here.
        (if (gnc:not-all-zeros (append minuend-balances
                                       subtrahend-balances
-                                      difference-balances))
+                                      difference-balances
+                                      net-balances))
            (begin
              (gnc:html-document-add-object! document chart)
              (if show-table?
@@ -403,12 +423,12 @@
                          '())
                      (if show-net?
                          (if inc-exp?
-                             (list (G_ "Net Profit"))
+                             (list (G_ "Net Profit") (G_ "Savings Rate"))
                              (list (G_ "Net Worth")))
                          '())))
 
                    (for-each
-                    (lambda (date minuend subtrahend difference)
+                    (lambda (date minuend subtrahend difference net)
                       (gnc:html-table-append-row!
                        table
                        (cons date
@@ -417,11 +437,13 @@
                               (map
                                (cut gnc:make-gnc-monetary report-currency <>)
                                (append (if show-sep? (list minuend subtrahend) '())
-                                       (if show-net? (list difference) '())))))))
+                                       (if show-net? (list difference net) '())))))))
                     date-string-list
                     minuend-balances
                     subtrahend-balances
-                    difference-balances)
+                    difference-balances
+                    net-balances
+                    )
 
                    (gnc:html-document-add-object! document table)))
 
@@ -432,12 +454,12 @@
                   document
                   (gnc:lists->csv
                    (cons (if inc-exp?
-                             (map G_ '("Date" "Income" "Expense" "Net Profit"))
+                             (map G_ '("Date" "Income" "Expense" "Net Profit" "Savings Rate"))
                              (map G_ '("Date" "Assets" "Liabilities" "Net Worth")))
                          (map list
                               (map (cut gnc-print-time64 <> iso-date) dates-list)
                               minuend-balances
-                              subtrahend-balances difference-balances))))))))
+                              subtrahend-balances difference-balances net-balances))))))))
            (gnc:html-document-add-object!
             document
             (gnc:html-make-empty-data-warning
@@ -456,60 +478,17 @@
     document))
 
 ;; Export reports
-
-(export net-worth-barchart-uuid)
-(export net-worth-linechart-uuid)
-(export income-expense-barchart-uuid)
-
-(define net-worth-linechart-uuid "d8b63264186b11e19038001558291366")
-(define net-worth-barchart-uuid "cbba1696c8c24744848062c7f1cf4a72")
-(define income-expense-barchart-uuid "80769921e87943adade887b9835a7685")
-
 ;; Here we define the actual report
+;; Not sure if a line chart makes sense for Income & Expense
+;; Feel free to uncomment and try it though
 (gnc:define-report
  'version 1
- 'name (N_ "Net Worth Barchart")
- 'report-guid net-worth-barchart-uuid
- 'menu-path (list gnc:menuname-asset-liability)
- 'options-generator (lambda () (options-generator #f #f))
- 'renderer (lambda (report-obj) (net-renderer report-obj #f #f #f))
- 'export-types '(("CSV" . csv))
- 'export-thunk (lambda (report-obj export-type)
-                 (net-renderer report-obj #f #f export-type)))
-
-(gnc:define-report
- 'version 1
- 'name (N_ "Income/Expense Chart")
- 'report-guid income-expense-barchart-uuid
- 'menu-name (N_ "Income & Expense Barchart")
+ 'name (N_ "Savings Rate")
+ 'report-guid "d196d5f92b974ecbb03a9d378c767446"
+ 'menu-name (N_ "Savings Rate")
  'menu-path (list gnc:menuname-income-expense)
  'options-generator (lambda () (options-generator #t #f))
  'renderer (lambda (report-obj) (net-renderer report-obj #t #f #f))
  'export-types '(("CSV" . csv))
  'export-thunk (lambda (report-obj export-type)
                  (net-renderer report-obj #t #f export-type)))
-
-(gnc:define-report
- 'version 1
- 'name (N_ "Net Worth Linechart")
- 'report-guid net-worth-linechart-uuid
- 'menu-path (list gnc:menuname-asset-liability)
- 'options-generator (lambda () (options-generator #f #t))
- 'renderer (lambda (report-obj) (net-renderer report-obj #f #t #f))
- 'export-types '(("CSV" . csv))
- 'export-thunk (lambda (report-obj export-type)
-                 (net-renderer report-obj #f #t export-type)))
-
-;; Not sure if a line chart makes sense for Income & Expense
-;; Feel free to uncomment and try it though
-(gnc:define-report
- 'version 1
- 'name (N_ "Income & Expense Linechart")
- 'report-guid "e533c998186b11e1b2e2001558291366"
- 'menu-name (N_ "Income & Expense Linechart")
- 'menu-path (list gnc:menuname-income-expense)
- 'options-generator (lambda () (options-generator #t #t))
- 'renderer (lambda (report-obj) (net-renderer report-obj #t #t #f))
- 'export-types '(("CSV" . csv))
- 'export-thunk (lambda (report-obj export-type)
-                 (net-renderer report-obj #t #t export-type)))
